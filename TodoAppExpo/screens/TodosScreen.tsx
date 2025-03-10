@@ -1,21 +1,22 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import { View, TouchableOpacity, Image, StyleSheet } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useTheme } from '../contexts/themeContext';
 import { getDynamicStyles } from '../utils/themeCheck';
-import TodoContent from '../components/TodoContent';
+import TodoContent, { TodoContentRef } from '../components/TodoContent';
 
 const TodosScreen: React.FC = () => {
   const navigation = useNavigation();
   const { currentScheme } = useTheme();
   const dynamicStyles = getDynamicStyles(currentScheme);
+  const todoContentRef = useRef<TodoContentRef>(null);
 
   return (
     <View style={[styles.container, dynamicStyles.container]}>
-      <TodoContent />
+      <TodoContent ref={todoContentRef} />
       <TouchableOpacity
         style={styles.floatingButton}
-        onPress={() => navigation.navigate('AddTodo')}
+        onPress={() => todoContentRef.current?.openModal('add')}
       >
         <Image source={require('../assets/add.png')} style={styles.buttonImage} />
       </TouchableOpacity>

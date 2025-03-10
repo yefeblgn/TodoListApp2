@@ -1,9 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, forwardRef, useImperativeHandle } from 'react';
 import {
   View,
   FlatList,
   TouchableOpacity,
-  Image,
   Text,
   Modal,
   TextInput,
@@ -17,15 +16,18 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '../contexts/themeContext';
 import { getDynamicStyles } from '../utils/themeCheck';
 import { addTodo, editTodo, deleteTodo, listTodos } from '../api/process';
-import { useNavigation } from '@react-navigation/native';
 
-const TodosScreen: React.FC = () => {
+export interface TodoContentRef {
+  openModal: (mode: 'add' | 'edit', todo?: any) => void;
+}
+
+const TodoContent = forwardRef<TodoContentRef>((props, ref) => {
   const { currentScheme } = useTheme();
   const dynamicStyles = getDynamicStyles(currentScheme);
-  const navigation = useNavigation();
 
   const [todos, setTodos] = useState<any[]>([]);
   const [userId, setUserId] = useState<number | null>(null);
+
   const [modalVisible, setModalVisible] = useState(false);
   const [modalMode, setModalMode] = useState<'add' | 'edit'>('add');
   const [currentTodo, setCurrentTodo] = useState<any>(null);
@@ -57,6 +59,23 @@ const TodosScreen: React.FC = () => {
     fetchTodos();
   }, []);
 
+  useImperativeHandle(ref, () => ({
+    openModal: (mode: 'add' | 'edit', todo?: any) => {
+      setModalMode(mode);
+      if (mode === 'edit' && todo) {
+        setCurrentTodo(todo);
+        setTitle(todo.title);
+        setDescription(todo.description);
+        setTime(new Date(todo.time));
+      } else {
+        setTitle('');
+        setDescription('');
+        setTime(new Date());
+      }
+      setModalVisible(true);
+    },
+  }));
+
   const formatDate = (timeString: string) => {
     const dateObj = new Date(timeString);
     const day = dateObj.getDate();
@@ -64,23 +83,6 @@ const TodosScreen: React.FC = () => {
     const hours = dateObj.getHours().toString().padStart(2, '0');
     const minutes = dateObj.getMinutes().toString().padStart(2, '0');
     return `${day} ${monthName}, Saat ${hours}:${minutes}`;
-  };
-
-  const openAddModal = () => {
-    setModalMode('add');
-    setTitle('');
-    setDescription('');
-    setTime(new Date());
-    setModalVisible(true);
-  };
-
-  const openEditModal = (todo: any) => {
-    setModalMode('edit');
-    setCurrentTodo(todo);
-    setTitle(todo.title);
-    setDescription(todo.description);
-    setTime(new Date(todo.time));
-    setModalVisible(true);
   };
 
   const handleDelete = async (id: number) => {
@@ -115,7 +117,11 @@ const TodosScreen: React.FC = () => {
     } else {
       const res = await editTodo(currentTodo.id, userId, title, description, currentTodo.is_completed, time.toISOString());
       if (res.success) {
-        setTodos(todos.map((todo) => (todo.id === currentTodo.id ? { ...todo, title, description, time: time.toISOString() } : todo)));
+        setTodos(
+          todos.map((todo) =>
+            todo.id === currentTodo.id ? { ...todo, title, description, time: time.toISOString() } : todo
+          )
+        );
         setModalVisible(false);
       } else {
         Alert.alert('Hata', res.error || 'Todo güncellenemedi');
@@ -136,7 +142,7 @@ const TodosScreen: React.FC = () => {
   const renderRightActions = (progress: any, dragX: any, item: any) => (
     <TouchableOpacity
       style={[styles.rightAction, dynamicStyles.actionButton]}
-      onPress={() => openEditModal(item)}
+      onPress={() => ref && (ref as any).current.openModal('edit', item)}
     >
       <Text style={styles.actionText}>Düzenle</Text>
     </TouchableOpacity>
@@ -162,11 +168,6 @@ const TodosScreen: React.FC = () => {
         renderItem={renderItem}
         contentContainerStyle={[styles.listContainer, dynamicStyles.container]}
       />
-
-      <TouchableOpacity style={styles.floatingButton} onPress={openAddModal}>
-        <Image source={require('../assets/add.png')} style={styles.buttonImage} />
-      </TouchableOpacity>
-
       <Modal visible={modalVisible} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
           <View style={[styles.modalContainer, dynamicStyles.modalContainer]}>
@@ -186,9 +187,7 @@ const TodosScreen: React.FC = () => {
               style={[styles.input, dynamicStyles.input]}
             />
             <TouchableOpacity onPress={() => setDatePickerVisibility(true)} style={styles.dateButton}>
-              <Text style={styles.dateButtonText}>
-                {`Saat: ${formatDate(time.toISOString())}`}
-              </Text>
+              <Text style={styles.dateButtonText}>{`Saat: ${formatDate(time.toISOString())}`}</Text>
             </TouchableOpacity>
             <DateTimePickerModal
               isVisible={isDatePickerVisible}
@@ -219,7 +218,7 @@ const TodosScreen: React.FC = () => {
       </Modal>
     </View>
   );
-};
+});
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
@@ -251,19 +250,6 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
   },
   actionText: { color: '#fff', fontWeight: '600', fontSize: 16 },
-  floatingButton: {
-    position: 'absolute',
-    right: 20,
-    bottom: 30,
-    backgroundColor: '#007AFF',
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    justifyContent: 'center',
-    alignItems: 'center',
-    elevation: 5,
-  },
-  buttonImage: { width: 30, height: 30, tintColor: '#fff' },
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.4)',
@@ -329,4 +315,4 @@ const styles = StyleSheet.create({
   },
 });
 
-export default TodosScreen;
+export default TodoContent;
