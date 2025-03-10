@@ -1,0 +1,6 @@
+@TodoApiNet_HostAddress = http://localhost:5217
+
+GET {{TodoApiNet_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
