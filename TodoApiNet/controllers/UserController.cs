@@ -1,139 +1,127 @@
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Configuration;
-using MySql.Data.MySqlClient;
-using System;
+using Microsoft.EntityFrameworkCore;
+using TodoApiNet.Data;
+using TodoApiNet.Models;
 
 namespace TodoApiNet.Controllers
 {
     [ApiController]
-    [Route("api")]
+    [Route("api/users")]
     public class UserController : ControllerBase
     {
-        private readonly string _connectionString;
-        public UserController(IConfiguration configuration)
+        private readonly AppDbContext _context;
+        public UserController(AppDbContext context)
         {
-            _connectionString = configuration.GetConnectionString("DefaultConnection");
+            _context = context;
         }
 
-        [HttpPost("newuser")]
-        public IActionResult RegisterUser([FromBody] UserRegister user)
+        [HttpPost("register")]
+        public async Task<IActionResult> RegisterUser([FromBody] UserRegister model)
         {
-            long insertedId;
-            using (var conn = new MySqlConnection(_connectionString))
+            if (string.IsNullOrEmpty(model.email) || string.IsNullOrEmpty(model.password))
+                return BadRequest(new { success = false, error = "Geçersiz veri." });
+
+            var exists = await _context.users.AnyAsync(u => u.email == model.email);
+            if (exists)
+                return Conflict(new { success = false, error = "Bu e-posta ile kayıtlı kullanıcı mevcut." });
+
+            var user = new User
             {
-                conn.Open();
-                var query = @"
-                    INSERT INTO users 
-                        (username, email, password, created_at, updated_at)
-                    VALUES
-                        (@username, @email, @password, @created_at, @updated_at);
-                    SELECT LAST_INSERT_ID();";
-                using (var cmd = new MySqlCommand(query, conn))
-                {
-                    cmd.Parameters.AddWithValue("@username", user.username);
-                    cmd.Parameters.AddWithValue("@email", user.email);
-                    cmd.Parameters.AddWithValue("@password", user.password);
-                    cmd.Parameters.AddWithValue("@created_at", DateTime.Now);
-                    cmd.Parameters.AddWithValue("@updated_at", DateTime.Now);
-                    insertedId = Convert.ToInt64(cmd.ExecuteScalar());
-                }
-            }
-            return Ok(new
-            {
-                success = true,
-                user_id = insertedId,
-                user = new { id = insertedId, username = user.username, email = user.email }
-            });
+                username = model.username,
+                email = model.email,
+                password = model.password,
+                created_at = DateTime.Now,
+                updated_at = DateTime.Now
+            };
+
+            _context.users.Add(user);
+            await _context.SaveChangesAsync();
+
+            return Ok(new { success = true, user_id = user.id });
         }
 
-        [HttpPost("userlogin")]
-        public IActionResult LoginUser([FromBody] UserLogin login)
+        [HttpPost("login")]
+        public async Task<IActionResult> LoginUser([FromBody] UserLogin model)
         {
-            User userFound = null;
-            using (var conn = new MySqlConnection(_connectionString))
-            {
-                conn.Open();
-                var query = "SELECT id, username, email, password FROM users WHERE email = @email";
-                using (var cmd = new MySqlCommand(query, conn))
-                {
-                    cmd.Parameters.AddWithValue("@email", login.email);
-                    using (var reader = cmd.ExecuteReader())
-                    {
-                        if (reader.Read())
-                        {
-                            userFound = new User
-                            {
-                                id = reader.GetInt32("id"),
-                                username = reader.GetString("username"),
-                                email = reader.GetString("email"),
-                                password = reader.GetString("password")
-                            };
-                        }
-                    }
-                }
-            }
-            if (userFound == null || userFound.password != login.password)
+            var user = await _context.users.FirstOrDefaultAsync(u => u.email == model.email);
+            if (user == null || user.password != model.password)
                 return Unauthorized(new { success = false, error = "Geçersiz e-posta veya şifre." });
-            return Ok(new
-            {
-                success = true,
-                user = new { id = userFound.id, username = userFound.username, email = userFound.email }
-            });
+
+            return Ok(new { success = true, user_id = user.id });
         }
 
-        [HttpPost("delete-account")]
-        public IActionResult DeleteAccount([FromBody] UserDelete request)
+        [HttpDelete("delete/{id}")]
+        public async Task<IActionResult> DeleteAccount(int id, [FromBody] UserDelete model)
         {
-            int rowsAffected;
-            using (var conn = new MySqlConnection(_connectionString))
-            {
-                conn.Open();
-                var selectQuery = "SELECT password FROM users WHERE email = @email";
-                string storedPassword = null;
-                using (var selectCmd = new MySqlCommand(selectQuery, conn))
-                {
-                    selectCmd.Parameters.AddWithValue("@email", request.email);
-                    storedPassword = selectCmd.ExecuteScalar()?.ToString();
-                }
-                if (storedPassword == null || storedPassword != request.password)
-                    return Unauthorized(new { success = false, error = "Geçersiz şifre." });
-                var deleteQuery = "DELETE FROM users WHERE email = @email";
-                using (var deleteCmd = new MySqlCommand(deleteQuery, conn))
-                {
-                    deleteCmd.Parameters.AddWithValue("@email", request.email);
-                    rowsAffected = deleteCmd.ExecuteNonQuery();
-                }
-            }
-            if (rowsAffected == 0)
-                return NotFound(new { success = false, error = "Kullanıcı bulunamadı." });
+            var user = await _context.users.FirstOrDefaultAsync(u => u.id == id && u.email == model.email);
+            if (user == null || user.password != model.password)
+                return Unauthorized(new { success = false, error = "Geçersiz şifre." });
+
+            _context.users.Remove(user);
+            await _context.SaveChangesAsync();
             return Ok(new { success = true });
+        }
+
+        [HttpPut("update-username")]
+        public async Task<IActionResult> UpdateUsername([FromBody] UpdateUsernameRequest model)
+        {
+            var user = await _context.users.FirstOrDefaultAsync(u => u.id == model.id && u.email == model.email);
+            if (user == null)
+                return NotFound(new { success = false, error = "Kullanıcı bulunamadı." });
+
+            user.username = model.newUsername;
+            user.updated_at = DateTime.Now;
+
+            await _context.SaveChangesAsync();
+            return Ok(new { success = true, message = "Kullanıcı adı güncellendi." });
+        }
+
+        [HttpPut("update-password")]
+        public async Task<IActionResult> UpdatePassword([FromBody] UpdatePasswordRequest model)
+        {
+            var user = await _context.users.FirstOrDefaultAsync(u => u.id == model.id && u.email == model.email);
+            if (user == null || user.password != model.oldPassword)
+                return Unauthorized(new { success = false, error = "Geçersiz e-posta veya eski şifre." });
+
+            user.password = model.newPassword;
+            user.updated_at = DateTime.Now;
+
+            await _context.SaveChangesAsync();
+            return Ok(new { success = true, message = "Şifre başarıyla güncellendi." });
         }
     }
 
     public class UserRegister
     {
-        public string username { get; set; }
-        public string email { get; set; }
-        public string password { get; set; }
+        public string username { get; set; } = null!;
+        public string email { get; set; } = null!;
+        public string password { get; set; } = null!;
     }
 
     public class UserLogin
     {
-        public string email { get; set; }
-        public string password { get; set; }
+        public string email { get; set; } = null!;
+        public string password { get; set; } = null!;
     }
 
     public class UserDelete
     {
-        public string email { get; set; }
-        public string password { get; set; }
+        public string email { get; set; } = null!;
+        public string password { get; set; } = null!;
     }
 
-    public class User
+    public class UpdateUsernameRequest
     {
         public int id { get; set; }
-        public string username { get; set; }
-        public string email { get; set; }
-        public string password { get; set; }
+        public string email { get; set; } = null!;
+        public string newUsername { get; set; } = null!;
+    }
+
+    public class UpdatePasswordRequest
+    {
+        public int id { get; set; }
+        public string email { get; set; } = null!;
+        public string oldPassword { get; set; } = null!;
+        public string newPassword { get; set; } = null!;
     }
 }

@@ -1,150 +1,75 @@
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Configuration;
-using MySql.Data.MySqlClient;
-using System;
-using System.Collections.Generic;
+using Microsoft.EntityFrameworkCore;
+using TodoApiNet.Data;
+using TodoApiNet.Models;
 
 namespace TodoApiNet.Controllers
 {
     [ApiController]
-    [Route("api")]
+    [Route("api/todos")]
     public class TodoController : ControllerBase
     {
-        private readonly string _connectionString;
-        public TodoController(IConfiguration configuration)
+        private readonly AppDbContext _context;
+        public TodoController(AppDbContext context)
         {
-            _connectionString = configuration.GetConnectionString("DefaultConnection");
+            _context = context;
         }
 
-        [HttpPost("add-todo")]
-        public IActionResult AddTodo([FromBody] TodoItem todo)
+        [HttpPost("add")]
+        public async Task<IActionResult> AddTodo([FromBody] TodoItem todo)
         {
-            long insertedId;
-            using (var conn = new MySqlConnection(_connectionString))
-            {
-                conn.Open();
-                var query = @"
-                    INSERT INTO todos 
-                        (user_id, title, description, is_completed, date, created_at, updated_at)
-                    VALUES
-                        (@user_id, @title, @description, 0, @date, @created_at, @updated_at);
-                    SELECT LAST_INSERT_ID();";
-                using (var cmd = new MySqlCommand(query, conn))
-                {
-                    cmd.Parameters.AddWithValue("@user_id", todo.user_id);
-                    cmd.Parameters.AddWithValue("@title", todo.title ?? (object)DBNull.Value);
-                    cmd.Parameters.AddWithValue("@description", string.IsNullOrEmpty(todo.description) ? (object)DBNull.Value : todo.description);
-                    cmd.Parameters.AddWithValue("@date", todo.date == default(DateTime) ? (object)DBNull.Value : todo.date);
-                    cmd.Parameters.AddWithValue("@created_at", DateTime.Now);
-                    cmd.Parameters.AddWithValue("@updated_at", DateTime.Now);
-                    insertedId = Convert.ToInt64(cmd.ExecuteScalar());
-                }
-            }
-            return Ok(new { success = true, todo_id = insertedId });
+            if (todo.user_id == 0 || string.IsNullOrEmpty(todo.title))
+                return BadRequest(new { success = false, error = "Geçersiz veri." });
+
+            todo.is_completed = false;
+            todo.created_at = DateTime.Now;
+            todo.updated_at = DateTime.Now;
+
+            _context.todos.Add(todo);
+            await _context.SaveChangesAsync();
+
+            return Ok(new { success = true, todo_id = todo.id });
         }
 
-        [HttpPost("edit-todo")]
-        public IActionResult EditTodo([FromBody] TodoItem todo)
+        [HttpPut("edit")]
+        public async Task<IActionResult> EditTodo([FromBody] TodoItem todo)
         {
-            int rowsAffected;
-            using (var conn = new MySqlConnection(_connectionString))
-            {
-                conn.Open();
-                var query = @"
-                    UPDATE todos
-                    SET 
-                        title = @title,
-                        description = @description,
-                        is_completed = @is_completed,
-                        date = @date,
-                        updated_at = @updated_at
-                    WHERE
-                        id = @id AND user_id = @user_id";
-                using (var cmd = new MySqlCommand(query, conn))
-                {
-                    cmd.Parameters.AddWithValue("@title", todo.title ?? (object)DBNull.Value);
-                    cmd.Parameters.AddWithValue("@description", string.IsNullOrEmpty(todo.description) ? (object)DBNull.Value : todo.description);
-                    cmd.Parameters.AddWithValue("@is_completed", todo.is_completed);
-                    cmd.Parameters.AddWithValue("@date", todo.date == default(DateTime) ? (object)DBNull.Value : todo.date);
-                    cmd.Parameters.AddWithValue("@updated_at", DateTime.Now);
-                    cmd.Parameters.AddWithValue("@id", todo.id);
-                    cmd.Parameters.AddWithValue("@user_id", todo.user_id);
-                    rowsAffected = cmd.ExecuteNonQuery();
-                }
-            }
-            if (rowsAffected == 0)
+            var existing = await _context.todos.FirstOrDefaultAsync(t => t.id == todo.id && t.user_id == todo.user_id);
+            if (existing == null)
                 return NotFound(new { success = false, error = "Todo bulunamadı." });
+
+            existing.title = todo.title ?? existing.title;
+            existing.description = todo.description ?? existing.description;
+            existing.due_date = todo.due_date ?? existing.due_date;
+            existing.is_completed = todo.is_completed;
+            existing.updated_at = DateTime.Now;
+
+            await _context.SaveChangesAsync();
             return Ok(new { success = true });
         }
 
-        [HttpPost("delete-todo")]
-        public IActionResult DeleteTodo([FromBody] TodoItem todo)
+        [HttpDelete("delete/{id}")]
+        public async Task<IActionResult> DeleteTodo(int id, [FromBody] UserRequest request)
         {
-            int rowsAffected;
-            using (var conn = new MySqlConnection(_connectionString))
-            {
-                conn.Open();
-                var query = "DELETE FROM todos WHERE id = @id AND user_id = @user_id";
-                using (var cmd = new MySqlCommand(query, conn))
-                {
-                    cmd.Parameters.AddWithValue("@id", todo.id);
-                    cmd.Parameters.AddWithValue("@user_id", todo.user_id);
-                    rowsAffected = cmd.ExecuteNonQuery();
-                }
-            }
-            if (rowsAffected == 0)
+            var existing = await _context.todos.FirstOrDefaultAsync(t => t.id == id && t.user_id == request.user_id);
+            if (existing == null)
                 return NotFound(new { success = false, error = "Todo bulunamadı." });
+
+            _context.todos.Remove(existing);
+            await _context.SaveChangesAsync();
             return Ok(new { success = true });
         }
 
-        [HttpPost("list-todo")]
-        public IActionResult ListTodo([FromBody] UserRequest request)
+        [HttpGet("list/{user_id}")]
+        public async Task<IActionResult> ListTodos(int user_id)
         {
-            var todos = new List<TodoItem>();
-            using (var conn = new MySqlConnection(_connectionString))
-            {
-                conn.Open();
-                var query = @"
-                    SELECT id, user_id, title, description, is_completed, date, created_at, updated_at 
-                    FROM todos 
-                    WHERE user_id = @user_id 
-                    ORDER BY date ASC";
-                using (var cmd = new MySqlCommand(query, conn))
-                {
-                    cmd.Parameters.AddWithValue("@user_id", request.user_id);
-                    using (var reader = cmd.ExecuteReader())
-                    {
-                        while (reader.Read())
-                        {
-                            todos.Add(new TodoItem
-                            {
-                                id = reader.GetInt32("id"),
-                                user_id = reader.GetInt32("user_id"),
-                                title = reader.IsDBNull(reader.GetOrdinal("title")) ? null : reader.GetString("title"),
-                                description = reader.IsDBNull(reader.GetOrdinal("description")) ? null : reader.GetString("description"),
-                                is_completed = reader.GetBoolean("is_completed"),
-                                date = reader.IsDBNull(reader.GetOrdinal("date")) ? default(DateTime) : reader.GetDateTime("date"),
-                                created_at = reader.IsDBNull(reader.GetOrdinal("created_at")) ? default(DateTime) : reader.GetDateTime("created_at"),
-                                updated_at = reader.IsDBNull(reader.GetOrdinal("updated_at")) ? default(DateTime) : reader.GetDateTime("updated_at")
-                            });
-                        }
-                    }
-                }
-            }
+            var todos = await _context.todos
+                .Where(t => t.user_id == user_id)
+                .OrderBy(t => t.due_date)
+                .ToListAsync();
+
             return Ok(new { success = true, todos });
         }
-    }
-
-    public class TodoItem
-    {
-        public int id { get; set; }
-        public int user_id { get; set; }
-        public string title { get; set; }
-        public string description { get; set; }
-        public bool is_completed { get; set; }
-        public DateTime date { get; set; }
-        public DateTime created_at { get; set; }
-        public DateTime updated_at { get; set; }
     }
 
     public class UserRequest
