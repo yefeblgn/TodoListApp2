@@ -14,12 +14,10 @@ var builder = WebApplication.CreateBuilder(args);
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
 
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseMySQL(connectionString)); // ✅ MySQL için doğru kullanım
+    options.UseMySQL(connectionString));
 
-// **Controller'ları Aktif Et**
 builder.Services.AddControllers();
 
-// **CORS Politikası Ekle (Eğer frontend bağlanacaksa)**
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowAll",
@@ -28,23 +26,21 @@ builder.Services.AddCors(options =>
                         .AllowAnyHeader());
 });
 
-// **Swagger (API Dokümantasyonu) Ekleyelim**
+// Swagger
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 var app = builder.Build();
 
-// **Geliştirme Ortamı İçin Swagger UI**
+// Swagger UI
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
 }
 
-// **CORS Kullanımı Açık Olsun**
+// Cors
 app.UseCors("AllowAll");
-
-// **Routing ve Controller'ları Kullan**
 app.UseRouting();
 app.UseAuthorization();
 app.MapControllers();
